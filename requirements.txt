@@ -1,0 +1,2 @@
+Scrapy>=2.11,<3.0
+redis[hiredis]>=7.3,<7.4

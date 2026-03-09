@@ -1,0 +1,11 @@
+services:
+  redis:
+    image: redis:latest # Use the official Redis image
+    restart: always # Ensure the container restarts if it fails
+    ports:
+      - "6379:6379" # Map the container's Redis port to the host machine
+    volumes:
+      - redis_data:/data # Persist data to a named volume
+
+volumes:
+  redis_data: 

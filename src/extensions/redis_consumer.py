@@ -42,29 +42,21 @@ class RedisConsumerExtension:
         if spider.name != "wb_cards":
             return
 
-        spider.logger.info("RedisConsumerExtension: spider_opened")
-
         self.redis = get_redis(self.settings)
-
-        spider.logger.info(
-            "RedisConsumerExtension: подключение к Redis, queue=%s",
-            self.queue_key,
-        )
 
         self.looping_call = task.LoopingCall(self._tick, spider)
         d = self.looping_call.start(self.poll_interval, now=True)
         d.addErrback(self._looping_call_errback, spider)
 
         spider.logger.info(
-            "RedisConsumerExtension: polling запущен, interval=%s",
+            "RedisConsumerExtension: polling запущен, interval=%s, batch_size=%s",
             self.poll_interval,
+            self.batch_size,
         )
 
     def spider_idle(self, spider: WbCardSpider):
         if spider.name != "wb_cards":
             return
-
-        spider.logger.debug("RedisConsumerExtension: spider_idle")
 
         if not self.stopping:
             raise DontCloseSpider
@@ -73,17 +65,10 @@ class RedisConsumerExtension:
         if spider.name != "wb_cards":
             return
 
-        spider.logger.info(
-            "RedisConsumerExtension: spider_closed, reason=%s",
-            reason,
-        )
-
         if self.looping_call and self.looping_call.running:
-            spider.logger.info("RedisConsumerExtension: stopping LoopingCall")
             self.looping_call.stop()
 
         if self.redis is not None:
-            spider.logger.info("RedisConsumerExtension: closing Redis connection")
             self.redis.close()
 
     def _looping_call_errback(self, failure, spider: WbCardSpider):
@@ -93,75 +78,65 @@ class RedisConsumerExtension:
         )
 
     def _tick(self, spider: WbCardSpider):
-        spider.logger.debug("RedisConsumerExtension: tick")
         return defer.ensureDeferred(self._tick_async(spider))
+
+    def _pop_batch(self) -> list[str]:
+        assert self.redis is not None
+
+        items = self.redis.rpop(self.queue_key, self.batch_size)
+        if not items:
+            return []
+
+        if isinstance(items, str):
+            return [items]
+
+        return items
+
+    def _get_done_and_queue_size(self) -> tuple[str | None, int]:
+        assert self.redis is not None
+
+        pipe = self.redis.pipeline()
+        pipe.get(self.done_key)
+        pipe.llen(self.queue_key)
+        done, queue_size = pipe.execute()
+        return done, queue_size
 
     async def _tick_async(self, spider: WbCardSpider):
         try:
             if self.redis is None or self.stopping:
-                spider.logger.debug(
-                    "RedisConsumerExtension: redis=None или stopping=True"
-                )
                 return
 
-            scheduled = 0
+            raw_tasks = await deferToThread(self._pop_batch)
 
-            spider.logger.debug("RedisConsumerExtension: читаю Redis очередь")
+            if raw_tasks:
+                for raw_task in raw_tasks:
+                    task_data = json.loads(raw_task)
 
-            for _ in range(self.batch_size):
-                result = await deferToThread(self.redis.rpop, self.queue_key)
+                    nm_id = task_data["nm_id"]
+                    source_item = task_data.get("source_item", {})
+                    url = spider.build_card_url(nm_id)
 
-                if not result:
-                    spider.logger.debug("RedisConsumerExtension: очередь пуста")
-                    break
+                    request = scrapy.Request(
+                        url=url,
+                        callback=spider.parse_card,
+                        errback=spider.errback_card,
+                        dont_filter=True,
+                        meta={
+                            "source_item": source_item,
+                            "nm_id": nm_id,
+                            "card_url": url,
+                        },
+                    )
 
-                task_data = json.loads(result)
+                    self.crawler.engine.crawl(request)
 
-                nm_id = task_data["nm_id"]
-                source_item = task_data.get("source_item", {})
-
-                spider.logger.debug(
-                    "RedisConsumerExtension: задача nm_id=%s",
-                    nm_id,
-                )
-
-                url = spider.build_card_url(nm_id)
-
-                request = scrapy.Request(
-                    url=url,
-                    callback=spider.parse_card,
-                    errback=spider.errback_card,
-                    dont_filter=True,
-                    meta={
-                        "source_item": source_item,
-                        "nm_id": nm_id,
-                        "card_url": url,
-                    },
-                )
-
-                spider.logger.debug(
-                    "RedisConsumerExtension: добавляю request %s",
-                    url,
-                )
-
-                self.crawler.engine.crawl(request)
-                scheduled += 1
-
-            if scheduled:
                 spider.logger.info(
                     "RedisConsumerExtension: добавлено задач из Redis: %s",
-                    scheduled,
+                    len(raw_tasks),
                 )
                 return
 
-            done = await deferToThread(self.redis.get, self.done_key)
-            queue_size = await deferToThread(self.redis.llen, self.queue_key)
-
-            spider.logger.debug(
-                "RedisConsumerExtension: done=%s queue_size=%s",
-                done,
-                queue_size,
-            )
+            done, queue_size = await deferToThread(self._get_done_and_queue_size)
 
             if done == "1" and queue_size == 0:
                 spider.logger.info(

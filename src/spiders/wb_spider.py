@@ -58,29 +58,26 @@ class WbSpider(scrapy.Spider):
         page = response.meta["page"]
         self.logger.info("page %s products %s", page, len(products))
 
-        for item in products:
-            nm_id = item.get("id")
-            if not nm_id:
-                continue
-
-            added = self.redis.sadd(self.redis_seen_key, nm_id)
-            if not added:
-                continue
-
-            task = {
-                "nm_id": nm_id,
-                "source_item": item,
-            }
-
-            
-            self.redis.lpush(
-                    self.redis_queue_key,
-                    json.dumps(task, ensure_ascii=False),
-                )
-            
-
         if products:
+            tasks = []
+
+            for item in products:
+                nm_id = item.get("id")
+                if not nm_id:
+                    continue
+
+                task = {
+                    "nm_id": nm_id,
+                    "source_item": item,
+                }
+
+                tasks.append(json.dumps(task, ensure_ascii=False))
+
+            if tasks:
+                self.redis.lpush(self.redis_queue_key, *tasks)
+
             yield self.make_request(page + 1)
+
         else:
             self.logger.info("Поиск завершён, ставлю флаг done")
             self.redis.set(self.redis_done_key, "1")
@@ -88,4 +85,4 @@ class WbSpider(scrapy.Spider):
     async def closed(self, reason):
         if hasattr(self, "redis"):
             self.redis.set(self.redis_done_key, "1")
-            await self.redis.aclose()
+            self.redis.close()

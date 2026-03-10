@@ -9,7 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
-OUTPUT = "products.xlsx"
+
+JSONL_OUTPUT = "products.jsonl"
+XLSX_OUTPUT = "products.xlsx"
 
 REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "wb:card_urls")
 REDIS_DONE_KEY = os.getenv("REDIS_DONE_KEY", "wb:done")
@@ -51,10 +53,11 @@ redis-logs      show Redis logs
 refresh         refresh Wildberries session
 
 crawl-wb        run producer spider
-crawl-cards     run consumer spider
+crawl-cards     run consumer spider -> JSONL
+convert         convert JSONL -> XLSX
 
-run             full pipeline (redis-up -> refresh -> crawl-wb + crawl-cards)
-clean-output    remove output file
+run             full pipeline (redis-up -> refresh -> crawl-wb + crawl-cards -> convert)
+clean-output    remove output files
 reset-redis     clear Redis queue keys
 print-env       print redis environment variables
 
@@ -118,7 +121,18 @@ def crawl_wb_cmd() -> list[str]:
 
 def crawl_cards_cmd() -> list[str]:
     python_bin = get_python()
-    return [python_bin, "-m", "scrapy", "crawl", "wb_cards", "-O", OUTPUT]
+    return [python_bin, "-m", "scrapy", "crawl", "wb_cards", "-O", JSONL_OUTPUT]
+
+
+def convert_cmd() -> list[str]:
+    python_bin = get_python()
+    return [
+        python_bin,
+        "-m",
+        "src.scripts.jsonl_to_xlsx",
+        JSONL_OUTPUT,
+        XLSX_OUTPUT,
+    ]
 
 
 def crawl_wb() -> None:
@@ -129,9 +143,13 @@ def crawl_cards() -> None:
     run(crawl_cards_cmd())
 
 
-def terminate_process(proc: subprocess.Popen, name: str, timeout: float = 10) -> None:
+def convert() -> None:
+    run(convert_cmd())
+
+
+def terminate_process(proc: subprocess.Popen, name: str, timeout: float = 10) -> int | None:
     if proc.poll() is not None:
-        return
+        return proc.returncode
 
     print(f"Stopping {name}...")
 
@@ -141,11 +159,11 @@ def terminate_process(proc: subprocess.Popen, name: str, timeout: float = 10) ->
         else:
             proc.send_signal(signal.SIGTERM)
 
-        proc.wait(timeout=timeout)
+        return proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         print(f"{name} did not stop gracefully, killing...")
         proc.kill()
-        proc.wait()
+        return proc.wait()
 
 
 def run_pipeline() -> None:
@@ -170,16 +188,21 @@ def run_pipeline() -> None:
         print(f"Waiting {grace_seconds} seconds for consumer to finish remaining tasks...")
         time.sleep(grace_seconds)
 
+        consumer_terminated_by_us = False
+
         if cards_proc.poll() is None:
             terminate_process(cards_proc, "wb_cards")
-            print(f"\nPipeline completed. Output file: {OUTPUT}")
-            return
+            consumer_terminated_by_us = True
 
         cards_returncode = cards_proc.wait()
-        if cards_returncode != 0:
+
+        if not consumer_terminated_by_us and cards_returncode != 0:
             raise subprocess.CalledProcessError(cards_returncode, crawl_cards_cmd())
 
-        print(f"\nPipeline completed. Output file: {OUTPUT}")
+        print("Converting JSONL to XLSX...")
+        convert()
+
+        print(f"\nPipeline completed. JSONL: {JSONL_OUTPUT}, XLSX: {XLSX_OUTPUT}")
 
     except KeyboardInterrupt:
         print("\nInterrupted by user")
@@ -189,12 +212,17 @@ def run_pipeline() -> None:
 
 
 def clean_output() -> None:
-    path = ROOT / OUTPUT
-    if path.exists():
-        path.unlink()
-        print("Output removed")
-    else:
-        print("Output file not found")
+    removed = False
+
+    for filename in (JSONL_OUTPUT, XLSX_OUTPUT):
+        path = ROOT / filename
+        if path.exists():
+            path.unlink()
+            print(f"Removed: {filename}")
+            removed = True
+
+    if not removed:
+        print("Output files not found")
 
 
 def reset_redis() -> None:
@@ -212,6 +240,8 @@ def print_env() -> None:
     print("REDIS_QUEUE_KEY =", REDIS_QUEUE_KEY)
     print("REDIS_DONE_KEY =", REDIS_DONE_KEY)
     print("PYTHON =", get_python())
+    print("JSONL_OUTPUT =", JSONL_OUTPUT)
+    print("XLSX_OUTPUT =", XLSX_OUTPUT)
 
 
 def quickstart() -> None:
@@ -231,6 +261,7 @@ COMMANDS = {
     "refresh": refresh,
     "crawl-wb": crawl_wb,
     "crawl-cards": crawl_cards,
+    "convert": convert,
     "run": run_pipeline,
     "clean-output": clean_output,
     "reset-redis": reset_redis,

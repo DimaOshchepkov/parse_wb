@@ -5,6 +5,8 @@ from scrapy.http import Response, TextResponse
 from twisted.python.failure import Failure
 from math import inf
 
+from src.WbBasketResolver import WbBasketResolver
+
 
 class WbCardSpider(scrapy.Spider):
     name = "wb_cards"
@@ -84,11 +86,5 @@ class WbCardSpider(scrapy.Spider):
     )
 
     def get_basket_host(self, vol: int) -> str:
-        idx = bisect_right(self.RANGES, (vol, inf)) - 1
-
-        if idx >= 0:
-            start, end = self.RANGES[idx]
-            if vol <= end:
-                return f"basket-{idx + 1:02d}.wbbasket.ru"
-
-        raise ValueError(vol)
+        basket = WbBasketResolver.get_basket_number(vol)
+        return f"basket-{basket:02d}.wbbasket.ru"

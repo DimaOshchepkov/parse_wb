@@ -28,6 +28,22 @@ class WbSpider(scrapy.Spider):
     custom_settings = {
         "LOG_LEVEL": "INFO",
     }
+    
+    def __init__(self, query="пальто из натуральной шерсти", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.api_params["query"] = {
+            "ab_testing": "false",
+            "appType": 1,
+            "curr": "rub",
+            "dest": -3390592,
+            "hide_vflags": 4294967296,
+            "lang": "ru",
+            "query": query,
+            "resultset": "catalog",
+            "sort": "popular",
+            "spp": 30,
+            "suppressSpellcheck": "false",
+        }
 
     async def start(self):
         self.redis = get_redis(self.settings)

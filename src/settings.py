@@ -8,6 +8,7 @@
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
 import os
+from dotenv import load_dotenv
 
 
 BOT_NAME = "src"
@@ -53,9 +54,9 @@ DOWNLOADER_MIDDLEWARES = {
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html
-EXTENSIONS = {
-   "src.extensions.redis_consumer.RedisConsumerExtension": 500,
-}
+#EXTENSIONS = {
+#   "src.extensions.redis_consumer.RedisConsumerExtension": 500,
+#}
 
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
@@ -91,12 +92,14 @@ CONCURRENT_REQUESTS = 1
 RANDOMIZE_DOWNLOAD_DELAY = False
 
 REDIS_QUEUE_KEY = "wb:card_tasks"
-REDIS_DONE_KEY = "wb:search_done"
-REDIS_SEEN_KEY = "wb:seen_nm_ids"
+REDIS_DONE_KEY = "wb:done"
+
+
+load_dotenv()
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
-REDIS_CONSUMER_BATCH_SIZE = 10
-REDIS_CONSUMER_POLL_INTERVAL = 1.0
+REDIS_CONSUMER_BATCH_SIZE = int(os.getenv("REDIS_CONSUMER_BATCH_SIZE", 100))
+REDIS_CONSUMER_POLL_INTERVAL = float(os.getenv("REDIS_CONSUMER_POLL_INTERVAL", 1.0))

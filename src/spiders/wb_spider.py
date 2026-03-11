@@ -11,27 +11,13 @@ class WbSpider(scrapy.Spider):
     name = "wb"
     base_url = "https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search"
 
-    api_params = {
-        "ab_testing": "false",
-        "appType": 1,
-        "curr": "rub",
-        "dest": -3390592,
-        "hide_vflags": 4294967296,
-        "lang": "ru",
-        "query": "пальто из натуральной шерсти",
-        "resultset": "catalog",
-        "sort": "popular",
-        "spp": 30,
-        "suppressSpellcheck": "false",
-    }
-
     custom_settings = {
         "LOG_LEVEL": "INFO",
     }
     
     def __init__(self, query="пальто из натуральной шерсти", *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.api_params["query"] = {
+        self.api_params = {
             "ab_testing": "false",
             "appType": 1,
             "curr": "rub",

@@ -7,14 +7,29 @@ import time
 import venv
 from pathlib import Path
 
+
+def load_env(path=".env"):
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key, value)
+    except FileNotFoundError:
+        pass
+
+
 ROOT = Path(__file__).resolve().parent
 VENV_DIR = ROOT / ".venv"
 
-JSONL_OUTPUT = "products.jsonl"
-XLSX_OUTPUT = "products.xlsx"
+JSONL_OUTPUT = os.getenv("JSONL_OUTPUT", "products.jsonl")
+XLSX_OUTPUT = os.getenv("XLSX_OUTPUT", "products.xlsx")
 
-REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "wb:card_urls")
+REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", "wb:card_tasks")
 REDIS_DONE_KEY = os.getenv("REDIS_DONE_KEY", "wb:done")
+IN_PROGRESS_KEY = os.getenv("IN_PROGRESS_KEY", "wb:cards:in_progress")
 
 
 def get_venv_python() -> Path:
@@ -168,6 +183,7 @@ def terminate_process(proc: subprocess.Popen, name: str, timeout: float = 10) ->
 
 def run_pipeline() -> None:
     redis_up()
+    reset_redis()
     refresh()
 
     print("Starting wb producer...")
@@ -183,20 +199,10 @@ def run_pipeline() -> None:
             raise subprocess.CalledProcessError(wb_returncode, crawl_wb_cmd())
 
         print("Producer finished successfully")
-
-        grace_seconds = 5
-        print(f"Waiting {grace_seconds} seconds for consumer to finish remaining tasks...")
-        time.sleep(grace_seconds)
-
-        consumer_terminated_by_us = False
-
-        if cards_proc.poll() is None:
-            terminate_process(cards_proc, "wb_cards")
-            consumer_terminated_by_us = True
+        print("Waiting for consumer to finish remaining tasks...")
 
         cards_returncode = cards_proc.wait()
-
-        if not consumer_terminated_by_us and cards_returncode != 0:
+        if cards_returncode != 0:
             raise subprocess.CalledProcessError(cards_returncode, crawl_cards_cmd())
 
         print("Converting JSONL to XLSX...")
@@ -233,12 +239,14 @@ def reset_redis() -> None:
         "DEL",
         REDIS_QUEUE_KEY,
         REDIS_DONE_KEY,
+        IN_PROGRESS_KEY,
     ])
 
 
 def print_env() -> None:
     print("REDIS_QUEUE_KEY =", REDIS_QUEUE_KEY)
     print("REDIS_DONE_KEY =", REDIS_DONE_KEY)
+    print("IN_PROGRESS_KEY =", IN_PROGRESS_KEY)
     print("PYTHON =", get_python())
     print("JSONL_OUTPUT =", JSONL_OUTPUT)
     print("XLSX_OUTPUT =", XLSX_OUTPUT)
@@ -283,4 +291,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    load_env()
     main()
